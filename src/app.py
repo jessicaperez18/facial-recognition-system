@@ -1,27 +1,27 @@
 import cv2
 import sys
 import os
-import threading
 import tkinter as tk
-from tkinter import font as tkfont
 from PIL import Image, ImageTk
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from detector import FaceDetector
 from utils import save_data, load_data, draw_results
+from reconocedor_pca import ReconocedorPCA
 
 # ─────────────────────────────────────────────
 #  COLORES Y ESTILOS
 # ─────────────────────────────────────────────
-BG        = "#0d0f14"
-PANEL     = "#13161e"
-ACCENT    = "#00f0a0"
-ACCENT2   = "#00b8ff"
-DANGER    = "#ff4060"
-TEXT      = "#e8eaf0"
-SUBTEXT   = "#6b7080"
-BORDER    = "#1e2230"
+BG      = "#0d0f14"
+PANEL   = "#13161e"
+ACCENT  = "#00f0a0"
+ACCENT2 = "#00b8ff"
+ACCENT3 = "#ff9f00"
+DANGER  = "#ff4060"
+TEXT    = "#e8eaf0"
+SUBTEXT = "#6b7080"
+BORDER  = "#1e2230"
 
 # ─────────────────────────────────────────────
 #  APP PRINCIPAL
@@ -30,18 +30,18 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Sistema de Reconocimiento Facial")
-        self.geometry("900x620")
+        self.geometry("900x640")
         self.resizable(False, False)
         self.configure(bg=BG)
 
-        self.detector = FaceDetector()
+        self.detector     = FaceDetector()
         self.detector.known_encodings, self.detector.known_names = load_data()
 
-        self.video      = None
-        self.running    = False
-        self.frame_count = 0
+        self.pca_detector = ReconocedorPCA()
 
-        # Contenedor de páginas
+        self.video   = None
+        self.running = False
+
         container = tk.Frame(self, bg=BG)
         container.pack(fill="both", expand=True)
 
@@ -77,7 +77,7 @@ class App(tk.Tk):
 
 
 # ─────────────────────────────────────────────
-#  HELPERS DE WIDGETS
+#  HELPERS
 # ─────────────────────────────────────────────
 def make_btn(parent, text, command, color=ACCENT, width=220):
     btn = tk.Button(
@@ -97,17 +97,6 @@ def _lighten(hex_color):
     b = min(255, int(hex_color[5:7], 16) + 30)
     return f"#{r:02x}{g:02x}{b:02x}"
 
-def make_label(parent, text, size=12, color=TEXT, bold=False):
-    weight = "bold" if bold else "normal"
-    return tk.Label(parent, text=text, bg=BG, fg=color,
-                    font=("Courier New", size, weight))
-
-def card(parent, width, height):
-    f = tk.Frame(parent, bg=PANEL, width=width, height=height,
-                 highlightbackground=BORDER, highlightthickness=1)
-    f.pack_propagate(False)
-    return f
-
 
 # ─────────────────────────────────────────────
 #  PÁGINA 1 — MENÚ PRINCIPAL
@@ -117,21 +106,55 @@ class MenuPage(tk.Frame):
         super().__init__(parent, bg=BG)
         self.controller = controller
 
-        # Título
         tk.Label(self, text="◈ FACE ID", bg=BG, fg=ACCENT,
-                 font=("Courier New", 32, "bold")).pack(pady=(80, 4))
+                 font=("Courier New", 32, "bold")).pack(pady=(60, 4))
         tk.Label(self, text="Sistema de Reconocimiento Facial",
-                 bg=BG, fg=SUBTEXT, font=("Courier New", 11)).pack(pady=(0, 60))
+                 bg=BG, fg=SUBTEXT, font=("Courier New", 11)).pack(pady=(0, 40))
+
+        # Método de reconocimiento
+        tk.Label(self, text="MÉTODO DE RECONOCIMIENTO",
+                 bg=BG, fg=SUBTEXT, font=("Courier New", 9)).pack(pady=(0, 10))
+
+        self.metodo = tk.StringVar(value="face_recognition")
+        frame_metodos = tk.Frame(self, bg=BG)
+        frame_metodos.pack(pady=(0, 30))
+
+        tk.Radiobutton(frame_metodos, text="face_recognition",
+                       variable=self.metodo, value="face_recognition",
+                       bg=BG, fg=ACCENT, selectcolor=PANEL,
+                       activebackground=BG, activeforeground=ACCENT,
+                       font=("Courier New", 11)).pack(side="left", padx=20)
+
+        tk.Radiobutton(frame_metodos, text="PCA Eigenfaces",
+                       variable=self.metodo, value="pca",
+                       bg=BG, fg=ACCENT3, selectcolor=PANEL,
+                       activebackground=BG, activeforeground=ACCENT3,
+                       font=("Courier New", 11)).pack(side="left", padx=20)
 
         # Botones
         make_btn(self, "  + Registrar Rostro",
-                 lambda: controller.show("RegisterPage"), ACCENT).pack(pady=10)
+                 lambda: controller.show("RegisterPage"), ACCENT).pack(pady=8)
         make_btn(self, "  ▶ Iniciar Reconocimiento",
-                 lambda: controller.show("RecognizePage"), ACCENT2).pack(pady=10)
+                 self.iniciar_reconocimiento, ACCENT2).pack(pady=8)
 
-        # Footer
         tk.Label(self, text="presiona una opción para continuar",
                  bg=BG, fg=SUBTEXT, font=("Courier New", 9)).pack(side="bottom", pady=20)
+
+    def iniciar_reconocimiento(self):
+        metodo = self.metodo.get()
+        self.controller.frames["RecognizePage"].set_metodo(metodo)
+
+        if metodo == "pca":
+            self.controller.frames["RecognizePage"].status.config(
+                text="Entrenando PCA...", fg=ACCENT3)
+            self.update()
+            ok = self.controller.pca_detector.entrenar()
+            if not ok:
+                self.controller.frames["RecognizePage"].status.config(
+                    text="⚠ No hay fotos de entrenamiento", fg=DANGER)
+                return
+
+        self.controller.show("RecognizePage")
 
 
 # ─────────────────────────────────────────────
@@ -143,37 +166,31 @@ class RegisterPage(tk.Frame):
         self.controller = controller
         self.capturing  = False
 
-        # ── Layout: izquierda (cámara) + derecha (controles)
         left = tk.Frame(self, bg=BG)
         left.pack(side="left", padx=30, pady=30)
 
         right = tk.Frame(self, bg=BG)
         right.pack(side="left", padx=20, pady=30, fill="y")
 
-        # Cámara
         tk.Label(left, text="CÁMARA EN VIVO", bg=BG, fg=ACCENT,
                  font=("Courier New", 10, "bold")).pack(anchor="w", pady=(0, 8))
-        self.cam_label = tk.Label(left, bg="#080a0f",
-                                  width=640, height=400)
+        self.cam_label = tk.Label(left, bg="#080a0f", width=560, height=400)
         self.cam_label.pack()
 
-        hint = tk.Label(left, text="[ ESPACIO ] capturar  ·  [ ESC ] cancelar",
-                        bg=BG, fg=SUBTEXT, font=("Courier New", 9))
-        hint.pack(pady=6)
+        tk.Label(left, text="[ ESPACIO ] capturar  ·  [ ESC ] cancelar",
+                 bg=BG, fg=SUBTEXT, font=("Courier New", 9)).pack(pady=6)
 
-        # Controles derecha
         tk.Label(right, text="◈ REGISTRAR", bg=BG, fg=ACCENT,
                  font=("Courier New", 16, "bold")).pack(anchor="w", pady=(10, 30))
 
         tk.Label(right, text="Nombre:", bg=BG, fg=TEXT,
                  font=("Courier New", 11)).pack(anchor="w")
         self.name_var = tk.StringVar()
-        entry = tk.Entry(right, textvariable=self.name_var,
-                         bg=PANEL, fg=TEXT, insertbackground=ACCENT,
-                         font=("Courier New", 12), relief="flat",
-                         highlightbackground=BORDER, highlightthickness=1,
-                         width=18)
-        entry.pack(pady=(4, 20), ipady=8)
+        tk.Entry(right, textvariable=self.name_var,
+                 bg=PANEL, fg=TEXT, insertbackground=ACCENT,
+                 font=("Courier New", 12), relief="flat",
+                 highlightbackground=BORDER, highlightthickness=1,
+                 width=18).pack(pady=(4, 20), ipady=8)
 
         self.status = tk.Label(right, text="", bg=BG, fg=ACCENT,
                                font=("Courier New", 10), wraplength=200)
@@ -181,7 +198,6 @@ class RegisterPage(tk.Frame):
 
         make_btn(right, "← Volver", self.volver, SUBTEXT, 160).pack(side="bottom", pady=10)
 
-        # Bind teclado
         self.bind_all("<space>",  self.capturar)
         self.bind_all("<Escape>", self.volver_key)
 
@@ -200,7 +216,7 @@ class RegisterPage(tk.Frame):
             img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(img).resize((560, 400))
             imgtk = ImageTk.PhotoImage(img)
-            self.cam_label.config(image=imgtk, width=560, height=400)
+            self.cam_label.config(image=imgtk)
             self.cam_label.image = imgtk
             self._frame = frame
         self.after(15, self._update_frame)
@@ -245,27 +261,33 @@ class RegisterPage(tk.Frame):
 class RecognizePage(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg=BG)
-        self.controller   = controller
-        self.recognizing  = False
-        self.frame_count  = 0
+        self.controller  = controller
+        self.recognizing = False
+        self.metodo      = "face_recognition"
+        self.frame_count = 0
 
-        # Título
         tk.Label(self, text="◈ RECONOCIMIENTO EN VIVO", bg=BG, fg=ACCENT2,
                  font=("Courier New", 14, "bold")).pack(pady=(20, 4))
-        tk.Label(self, text="el sistema identificará rostros automáticamente",
-                 bg=BG, fg=SUBTEXT, font=("Courier New", 9)).pack()
 
-        # Cámara
+        self.metodo_label = tk.Label(self, text="", bg=BG, fg=SUBTEXT,
+                                     font=("Courier New", 9))
+        self.metodo_label.pack()
+
         self.cam_label = tk.Label(self, bg="#080a0f")
         self.cam_label.pack(pady=14)
 
-        # Status
         self.status = tk.Label(self, text="Buscando rostros...", bg=BG, fg=SUBTEXT,
                                font=("Courier New", 11))
         self.status.pack(pady=6)
 
-        # Botón volver
         make_btn(self, "← Volver al Menú", self.volver, SUBTEXT).pack(pady=10)
+
+    def set_metodo(self, metodo):
+        self.metodo = metodo
+        if metodo == "pca":
+            self.metodo_label.config(text="método: PCA Eigenfaces", fg=ACCENT3)
+        else:
+            self.metodo_label.config(text="método: face_recognition", fg=ACCENT)
 
     def on_show(self):
         self.recognizing = True
@@ -284,13 +306,15 @@ class RecognizePage(tk.Frame):
 
         self.frame_count += 1
 
-        # Reconocer solo 1 de cada 3 frames
         if self.frame_count % 3 == 0:
-            results = self.controller.detector.recognize_faces(frame)
-            frame   = draw_results(frame, results)
+            if self.metodo == "pca":
+                results = self.controller.pca_detector.reconocer_frame(frame)
+            else:
+                results = self.controller.detector.recognize_faces(frame)
+
+            frame = draw_results(frame, results)
             self._last_results = results
 
-            # Si reconoció a alguien conocido → ir a bienvenida
             known = [r for r in results if r["name"] != "Desconocido"]
             if known:
                 name = known[0]["name"]
@@ -300,7 +324,6 @@ class RecognizePage(tk.Frame):
                 self.controller.show("WelcomePage")
                 return
         else:
-            # Reusar últimos resultados para no perder los recuadros
             if hasattr(self, "_last_results"):
                 frame = draw_results(frame, self._last_results)
 
@@ -319,7 +342,7 @@ class RecognizePage(tk.Frame):
 
 
 # ─────────────────────────────────────────────
-#  PÁGINA 4 — BIENVENIDA (después de reconocer)
+#  PÁGINA 4 — BIENVENIDA
 # ─────────────────────────────────────────────
 class WelcomePage(tk.Frame):
     def __init__(self, parent, controller):
@@ -328,7 +351,6 @@ class WelcomePage(tk.Frame):
 
         tk.Label(self, text="✓", bg=BG, fg=ACCENT,
                  font=("Courier New", 64)).pack(pady=(80, 10))
-
         tk.Label(self, text="IDENTIDAD VERIFICADA", bg=BG, fg=ACCENT,
                  font=("Courier New", 18, "bold")).pack()
 
