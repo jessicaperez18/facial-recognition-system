@@ -272,6 +272,15 @@ class RegisterPage(tk.Frame):
             self.status.config(
                 text=f"Foto {self._foto_count}/{total_fotos} ✓\nPresiona ESPACIO para continuar",
                 fg=ACCENT2)
+    def volver(self):
+            self.capturing = False
+            self.controller.close_camera()
+            self.unbind_all("<space>")
+            self.unbind_all("<Escape>")
+            self.controller.show("MenuPage")
+
+    def volver_key(self, event=None):
+            self.volver()    
 
 
 # ─────────────────────────────────────────────
