@@ -1,3 +1,6 @@
+from reconocedor_pca import ReconocedorPCA
+from utils import save_data, load_data, draw_results
+from detector import FaceDetector
 import cv2
 import sys
 import os
@@ -6,26 +9,25 @@ from PIL import Image, ImageTk
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from detector import FaceDetector
-from utils import save_data, load_data, draw_results
-from reconocedor_pca import ReconocedorPCA
 
 # ─────────────────────────────────────────────
 #  COLORES Y ESTILOS
 # ─────────────────────────────────────────────
-BG      = "#0d0f14"
-PANEL   = "#13161e"
-ACCENT  = "#00f0a0"
+BG = "#0d0f14"
+PANEL = "#13161e"
+ACCENT = "#00f0a0"
 ACCENT2 = "#00b8ff"
 ACCENT3 = "#ff9f00"
-DANGER  = "#ff4060"
-TEXT    = "#e8eaf0"
+DANGER = "#ff4060"
+TEXT = "#e8eaf0"
 SUBTEXT = "#6b7080"
-BORDER  = "#1e2230"
+BORDER = "#1e2230"
 
 # ─────────────────────────────────────────────
 #  APP PRINCIPAL
 # ─────────────────────────────────────────────
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -34,12 +36,12 @@ class App(tk.Tk):
         self.resizable(False, False)
         self.configure(bg=BG)
 
-        self.detector     = FaceDetector()
+        self.detector = FaceDetector()
         self.detector.known_encodings, self.detector.known_names = load_data()
 
         self.pca_detector = ReconocedorPCA()
 
-        self.video   = None
+        self.video = None
         self.running = False
 
         container = tk.Frame(self, bg=BG)
@@ -90,6 +92,7 @@ def make_btn(parent, text, command, color=ACCENT, width=220):
     btn.bind("<Enter>", lambda e: btn.config(bg=_lighten(color)))
     btn.bind("<Leave>", lambda e: btn.config(bg=color))
     return btn
+
 
 def _lighten(hex_color):
     r = min(255, int(hex_color[1:3], 16) + 30)
@@ -164,7 +167,7 @@ class RegisterPage(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg=BG)
         self.controller = controller
-        self.capturing  = False
+        self.capturing = False
 
         left = tk.Frame(self, bg=BG)
         left.pack(side="left", padx=30, pady=30)
@@ -196,14 +199,16 @@ class RegisterPage(tk.Frame):
                                font=("Courier New", 10), wraplength=200)
         self.status.pack(pady=10)
 
-        make_btn(right, "← Volver", self.volver, SUBTEXT, 160).pack(side="bottom", pady=10)
+        make_btn(right, "← Volver", self.volver, SUBTEXT,
+                 160).pack(side="bottom", pady=10)
 
         self.bind_all("<space>",  self.capturar)
         self.bind_all("<Escape>", self.volver_key)
 
     def on_show(self):
         self.name_var.set("")
-        self.status.config(text="Escribe el nombre y\npresiona ESPACIO", fg=SUBTEXT)
+        self.status.config(
+            text="Escribe el nombre y\npresiona ESPACIO", fg=SUBTEXT)
         self.controller.open_camera()
         self.capturing = True
         self._update_frame()
@@ -230,29 +235,43 @@ class RegisterPage(tk.Frame):
             self.status.config(text="⚠ Cámara no disponible", fg=DANGER)
             return
 
-        self.status.config(text="Procesando...", fg=ACCENT2)
+    # Inicializar contador de fotos si no existe
+        if not hasattr(self, "_foto_count"):
+            self._foto_count = 0
+            self._foto_name  = name
+
+    # Si cambiaron el nombre reiniciar contador
+        if self._foto_name != name:
+            self._foto_count = 0
+            self._foto_name  = name
+
+        total_fotos = 5
+        self._foto_count += 1
+
+        self.status.config(
+            text=f"Capturando foto {self._foto_count}/{total_fotos}...",
+            fg=ACCENT2)
         self.update()
 
-        temp_path = f"data/{name}_temp.jpg"
-        os.makedirs("data", exist_ok=True)
-        cv2.imwrite(temp_path, self._frame)
+        training_path = f"data/training/{name}"
+        os.makedirs(training_path, exist_ok=True)
+        foto_path = f"{training_path}/foto_{self._foto_count}.jpg"
+        cv2.imwrite(foto_path, self._frame)
 
-        det = self.controller.detector
-        det.register_face(temp_path, name)
-        save_data(det.known_encodings, det.known_names)
-        os.remove(temp_path)
-
-        self.status.config(text=f"✓ {name} registrado\ncorrectamente", fg=ACCENT)
-
-    def volver(self):
-        self.capturing = False
-        self.controller.close_camera()
-        self.unbind_all("<space>")
-        self.unbind_all("<Escape>")
-        self.controller.show("MenuPage")
-
-    def volver_key(self, event=None):
-        self.volver()
+        if self._foto_count >= total_fotos:
+            temp_path = f"data/{name}_temp.jpg"
+            cv2.imwrite(temp_path, self._frame)
+            det = self.controller.detector
+            det.register_face(temp_path, name)
+            save_data(det.known_encodings, det.known_names)
+            os.remove(temp_path)
+            self.status.config(
+                text=f"✓ {name} registrado\n5 fotos guardadas", fg=ACCENT)
+            self._foto_count = 0
+        else:
+            self.status.config(
+                text=f"Foto {self._foto_count}/{total_fotos} ✓\nPresiona ESPACIO para continuar",
+                fg=ACCENT2)
 
 
 # ─────────────────────────────────────────────
@@ -261,9 +280,9 @@ class RegisterPage(tk.Frame):
 class RecognizePage(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg=BG)
-        self.controller  = controller
+        self.controller = controller
         self.recognizing = False
-        self.metodo      = "face_recognition"
+        self.metodo = "face_recognition"
         self.frame_count = 0
 
         tk.Label(self, text="◈ RECONOCIMIENTO EN VIVO", bg=BG, fg=ACCENT2,
@@ -287,7 +306,8 @@ class RecognizePage(tk.Frame):
         if metodo == "pca":
             self.metodo_label.config(text="método: PCA Eigenfaces", fg=ACCENT3)
         else:
-            self.metodo_label.config(text="método: face_recognition", fg=ACCENT)
+            self.metodo_label.config(
+                text="método: face_recognition", fg=ACCENT)
 
     def on_show(self):
         self.recognizing = True
