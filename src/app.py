@@ -265,9 +265,12 @@ class RegisterPage(tk.Frame):
             det.register_face(temp_path, name)
             save_data(det.known_encodings, det.known_names)
             os.remove(temp_path)
+            self.controller.pca_detector = ReconocedorPCA()
+            self.controller.pca_detector.entrenar()
             self.status.config(
                 text=f"✓ {name} registrado\n5 fotos guardadas", fg=ACCENT)
             self._foto_count = 0
+
         else:
             self.status.config(
                 text=f"Foto {self._foto_count}/{total_fotos} ✓\nPresiona ESPACIO para continuar",
