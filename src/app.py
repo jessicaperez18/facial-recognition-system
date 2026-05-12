@@ -256,7 +256,8 @@ class RegisterPage(tk.Frame):
         training_path = f"data/training/{name}"
         os.makedirs(training_path, exist_ok=True)
         foto_path = f"{training_path}/foto_{self._foto_count}.jpg"
-        cv2.imwrite(foto_path, self._frame)
+        resultado = cv2.imwrite(foto_path, self._frame)
+        print(f"Guardando foto en: {foto_path} → {'OK' if resultado else 'FALLÓ'}")
 
         if self._foto_count >= total_fotos:
             temp_path = f"data/{name}_temp.jpg"
